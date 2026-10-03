@@ -18,9 +18,7 @@ export const pool =
   new Pool({
     connectionString,
     max: 5,
-    ssl: connectionString?.includes("sslmode=require")
-      ? { rejectUnauthorized: false }
-      : undefined,
+    ssl: { rejectUnauthorized: false }, // Neon requires SSL; rejectUnauthorized=False avoids cert-branding strictness
   });
 
 if (process.env.NODE_ENV !== "production") {

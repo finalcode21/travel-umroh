@@ -11,9 +11,7 @@ import { signUp } from "../src/core/auth/sessions";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL?.includes("sslmode=require")
-    ? { rejectUnauthorized: false }
-    : undefined,
+  ssl: { rejectUnauthorized: false },
 });
 const db = drizzle(pool, { schema, casing: "snake_case" });
 

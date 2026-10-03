@@ -8,7 +8,7 @@ async function main() {
   const url = process.env.DATABASE_URL!;
   const pool = new Pool({
     connectionString: url,
-    ssl: url.includes("sslmode=require") ? { rejectUnauthorized: false } : undefined,
+    ssl: { rejectUnauthorized: false },
   });
   const db = drizzle(pool);
   console.log("Running core migrations from ./drizzle …");
