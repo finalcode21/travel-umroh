@@ -1,42 +1,42 @@
 import { cache } from "react";
-import { auth } from "@clerk/nextjs/server";
 import { eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { db } from "@/db";
-import { companies, permissions, rolePermissions, roles, userBranches, userRoles, users } from "@/db/schema";
-import { AppError } from "@/lib/errors";
+import {
+  companies,
+  permissions,
+  rolePermissions,
+  roles,
+  userBranches,
+  userRoles,
+} from "@/db/schema";
+import { isAuthenticated, requireUser, getCurrentUser as getSessionUser } from "./sessions";
 import { getModuleAccessMap } from "@/core/modules/access";
-import { provisionUserFromClerk } from "./provision";
 import type { CurrentUser } from "@/types";
 
-export function isClerkConfigured(): boolean {
-  return Boolean(
-    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY,
-  );
-}
+/**
+ * Resolve the authenticated user with a fully flattened profile.
+ *
+ * Loads (in one request):
+ *   - roles bound to the user
+ *   - flattened permission codes across all the user's roles
+ *   - module access map for the user's company (if any)
+ *   - primary + granted extra branches
+ *
+ * This is the single place where the "CurrentUser" shape is produced,
+ * so any downstream ACL / navigation / action code reads one source of truth.
+ */
+async function loadUserProfile(
+  sessionUser: Awaited<ReturnType<typeof getSessionUser>>,
+): Promise<CurrentUser | null> {
+  if (!sessionUser) return null;
 
-async function loadUserByExternalId(externalId: string): Promise<CurrentUser | null> {
-  const [row] = await db
-    .select({
-      user: users,
-      company: companies,
-    })
-    .from(users)
-    .leftJoin(companies, eq(companies.id, users.companyId))
-    .where(eq(users.externalId, externalId))
-    .limit(1);
-  if (!row) return null;
-
-  const [roleRows, extraBranchRows] = await Promise.all([
+  const [roleRows] = await Promise.all([
     db
       .select({ id: roles.id, code: roles.code, name: roles.name })
       .from(userRoles)
       .innerJoin(roles, eq(roles.id, userRoles.roleId))
-      .where(eq(userRoles.userId, row.user.id)),
-    db
-      .select({ branchId: userBranches.branchId })
-      .from(userBranches)
-      .where(eq(userBranches.userId, row.user.id)),
+      .where(eq(userRoles.userId, sessionUser.id)),
   ]);
 
   let permissionCodes: string[] = [];
@@ -46,89 +46,93 @@ async function loadUserByExternalId(externalId: string): Promise<CurrentUser | n
       .from(userRoles)
       .innerJoin(rolePermissions, eq(rolePermissions.roleId, userRoles.roleId))
       .innerJoin(permissions, eq(permissions.id, rolePermissions.permissionId))
-      .where(eq(userRoles.userId, row.user.id));
+      .where(eq(userRoles.userId, sessionUser.id));
     permissionCodes = [...new Set(allPermRows.map((p) => p.code))];
   }
 
-  const moduleAccess = row.user.companyId
-    ? await getModuleAccessMap(row.user.companyId)
+  const moduleAccess = sessionUser.companyId
+    ? await getModuleAccessMap(sessionUser.companyId)
     : {};
 
+  const [companyRow] = sessionUser.companyId
+    ? await db
+        .select({ name: companies.name, status: companies.status })
+        .from(companies)
+        .where(eq(companies.id, sessionUser.companyId))
+        .limit(1)
+    : [];
+
+  const [extraBranchRows] = await Promise.all([
+    db
+      .select({ branchId: userBranches.branchId })
+      .from(userBranches)
+      .where(eq(userBranches.userId, sessionUser.id)),
+  ]);
+
   return {
-    id: row.user.id,
-    externalId: row.user.externalId,
-    name: row.user.name,
-    email: row.user.email,
-    avatarUrl: row.user.avatarUrl,
-    status: row.user.status,
-    isPlatformAdmin: row.user.isPlatformAdmin,
-    companyId: row.user.companyId,
-    companyName: row.company?.name ?? null,
-    companyStatus: row.company?.status ?? null,
-    branchId: row.user.branchId,
-    allBranches: row.user.allBranches,
+    id: sessionUser.id,
+    externalId: sessionUser.externalId,
+    name: sessionUser.name,
+    email: sessionUser.email,
+    avatarUrl: sessionUser.avatarUrl,
+    status: sessionUser.status,
+    isPlatformAdmin: sessionUser.isPlatformAdmin,
+    companyId: sessionUser.companyId,
+    companyName: companyRow?.name ?? null,
+    companyStatus: companyRow?.status ?? null,
+    branchId: sessionUser.branchId,
+    allBranches: sessionUser.allBranches,
     roles: roleRows,
     permissions: permissionCodes,
     moduleAccess,
     accessibleBranchIds: [
-      ...(row.user.branchId ? [row.user.branchId] : []),
+      ...(sessionUser.branchId ? [sessionUser.branchId] : []),
       ...extraBranchRows.map((b) => b.branchId),
     ],
   } satisfies CurrentUser;
 }
 
-/**
- * Resolve the current authenticated user (request-cached).
- * Returns null when not signed in or when the local record cannot be synced.
- */
-export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
-  if (!isClerkConfigured()) return null;
-  const { userId } = await auth();
-  if (!userId) return null;
-
-  let user = await loadUserByExternalId(userId);
-  if (!user) {
-    // webhook may lag behind first login — provision inline as a fallback
-    try {
-      await provisionUserFromClerk(userId);
-      user = await loadUserByExternalId(userId);
-    } catch (e) {
-      console.error("[auth] inline provisioning failed", e);
-      return null;
-    }
-  }
-
-  if (user) {
-    // opportunistic last-login stamp (at most once per hour per request path)
-    const now = Date.now();
-    void db
-      .update(users)
-      .set({ lastLoginAt: new Date(now) })
-      .where(eq(users.id, user.id))
-      .catch(() => undefined);
-  }
-  return user;
-});
-
 /** For server actions & route handlers: throws 401 when not signed in. */
-export async function requireUser(): Promise<CurrentUser> {
-  const user = await getCurrentUser();
-  if (!user) throw new AppError("UNAUTHENTICATED", "Sesi berakhir. Silakan login kembali.");
-  if (user.status !== "ACTIVE") {
-    throw new AppError("FORBIDDEN", "Akun Anda tidak aktif. Hubungi administrator.");
-  }
-  return user;
+export async function requireUserWithFullProfile(): Promise<CurrentUser> {
+  const user = await requireUser();
+  return (
+    await loadUserProfile(user)
+  ) ?? {
+    id: "",
+    externalId: "",
+    name: "",
+    email: "",
+    avatarUrl: null,
+    status: "ACTIVE",
+    isPlatformAdmin: false,
+    companyId: null,
+    companyName: null,
+    companyStatus: null,
+    branchId: null,
+    allBranches: false,
+    accessibleBranchIds: [],
+    roles: [],
+    permissions: [],
+    moduleAccess: {},
+  };
 }
+
+/** Resolve the current authenticated user with full profile (request-cached). */
+export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
+  return loadUserProfile(await getSessionUser());
+});
 
 /** Client IP / user-agent for audit trails. */
 export async function getRequestMeta(): Promise<{ ip?: string; userAgent?: string }> {
   try {
     const h = await headers();
     return {
-      ip: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? undefined,
+      ip: h.get("x-forwarded-for")?.split(",").map((s) => s.trim()).filter(Boolean)[0] ?? undefined,
       userAgent: h.get("user-agent") ?? undefined,
     };
   } catch {
     return {};
   }
 }
+
+export { isAuthenticated, requireUser };
