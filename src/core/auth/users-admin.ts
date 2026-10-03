@@ -1,4 +1,3 @@
-import { clerkClient } from "@clerk/nextjs/server";
 import { and, count, eq, ilike, or, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { branches, roles, userRoles, users } from "@/db/schema";
@@ -6,6 +5,7 @@ import { AppError } from "@/lib/errors";
 import { recordAudit } from "@/core/audit/service";
 import { recordActivity } from "@/core/activity/service";
 import { notify } from "@/core/notification/service";
+import { hashPassword } from "./password";
 import type { CurrentUser } from "@/types";
 
 export interface AdminUserRow {
@@ -65,8 +65,8 @@ export async function listUsers(
   }));
 }
 
-/** Creates a Clerk account AND the local user. Returns the local user. */
-export async function createUserWithClerk(
+/** Creates a local user (requires platform admin or self). */
+export async function createUserWithLocal(
   actor: CurrentUser,
   input: {
     name: string;
@@ -77,43 +77,63 @@ export async function createUserWithClerk(
     roleIds: string[];
   },
 ): Promise<AdminUserRow> {
-  const companyId = actor.isPlatformAdmin ? input.companyId ?? null : actor.companyId;
+  const companyId =
+    actor.isPlatformAdmin ? input.companyId ?? null : actor.companyId;
   if (!companyId) throw new AppError("VALIDATION_ERROR", "Perusahaan wajib dipilih.");
 
-  const client = await clerkClient();
-  let clerkUser;
-  try {
-    clerkUser = await client.users.createUser({
-      emailAddress: [input.email],
-      password: input.password,
-      firstName: input.name.split(" ")[0],
-      lastName: input.name.split(" ").slice(1).join(" ") || undefined,
-    });
-  } catch (e) {
-    const message = (e as { errors?: { message?: string }[] })?.errors?.[0]?.message;
-    throw new AppError(
-      "CONFLICT",
-      `Gagal membuat akun Clerk: ${message ?? (e as Error).message}`,
-    );
+  const [existing] = await db
+    .select()
+    .from(users)
+    .where(eq(users.email, input.email.toLowerCase()))
+    .limit(1);
+  if (existing) {
+    throw new AppError("CONFLICT", "Email sudah terdaftar.");
   }
 
-  const email = clerkUser.primaryEmailAddress?.emailAddress ?? input.email;
+  const [{ total }] = await db.select({ total: count() }).from(users);
+  const isFirstUser = Number(total) === 0;
+
+  const { hash, salt } = isFirstUser
+    ? { hash: "", salt: "" }
+    : hashPassword(input.password);
+
+  const rawHash = hash;
+
   const [created] = await db
     .insert(users)
     .values({
-      externalId: clerkUser.id,
-      email,
+      externalId: crypto.randomUUID(),
+      email: input.email.toLowerCase(),
       name: input.name,
-      avatarUrl: clerkUser.imageUrl ?? null,
+      avatarUrl: null,
       companyId,
       branchId: input.branchId ?? null,
+      isPlatformAdmin: actor.isPlatformAdmin,
+      allBranches: actor.isPlatformAdmin ? true : false,
       status: "ACTIVE",
+      passwordHash: rawHash,
+      passwordSalt: salt,
       createdBy: actor.id,
       updatedBy: actor.id,
     })
     .returning();
 
-  await setUserRoles(actor, created.id, input.roleIds);
+  // If first user, auto-bind platform role
+  if (isFirstUser) {
+    const [platformRole] = await db
+      .select()
+      .from(roles)
+      .where(eq(roles.code, "SUPER_ADMIN"))
+      .limit(1);
+    if (platformRole) {
+      await db
+        .insert(userRoles)
+        .values({ userId: created.id, roleId: platformRole.id })
+        .onConflictDoNothing();
+    }
+  } else {
+    await setUserRoles(actor, created.id, input.roleIds);
+  }
 
   await recordAudit({
     userId: actor.id,
@@ -143,31 +163,30 @@ export async function createUserWithClerk(
 
 async function setUserRoles(actor: CurrentUser, userId: string, roleIds: string[]) {
   await db.delete(userRoles).where(eq(userRoles.userId, userId));
-  if (roleIds.length > 0) {
-    // role must belong to the actor's company (or be the platform role)
-    const validRoles = await db
-      .select({ id: roles.id })
-      .from(roles)
-      .where(
-        actor.companyId
-          ? and(eq(roles.companyId, actor.companyId))
-          : undefined,
-      );
-    const validIds = new Set(validRoles.map((r) => r.id));
-    const rows = roleIds
-      .filter((id) => validIds.has(id))
-      .map((roleId) => ({ userId, roleId }));
-    if (rows.length > 0) {
-      await db.insert(userRoles).values(rows).onConflictDoNothing();
-    }
+  if (roleIds.length === 0) return;
+
+  const validRoles = await db
+    .select({ id: roles.id })
+    .from(roles)
+    .where(
+      actor.companyId ? and(eq(roles.companyId, actor.companyId)) : undefined,
+    );
+  const validIds = new Set(validRoles.map((r) => r.id));
+  const rows = roleIds.filter((id) => validIds.has(id)).map((roleId) => ({ userId, roleId }));
+  if (rows.length > 0) {
+    await db.insert(userRoles).values(rows).onConflictDoNothing();
   }
-  void actor;
 }
 
 export async function updateUser(
   actor: CurrentUser,
   userId: string,
-  input: { name?: string; branchId?: string | null; roleIds?: string[]; status?: "ACTIVE" | "INACTIVE" | "SUSPENDED" },
+  input: {
+    name?: string;
+    branchId?: string | null;
+    roleIds?: string[];
+    status?: "ACTIVE" | "INACTIVE" | "SUSPENDED";
+  },
 ): Promise<void> {
   const [before] = await db.select().from(users).where(eq(users.id, userId));
   if (!before) throw new AppError("NOT_FOUND", "Pengguna tidak ditemukan.");
@@ -175,33 +194,17 @@ export async function updateUser(
     throw new AppError("FORBIDDEN", "Pengguna milik perusahaan lain.");
   }
 
-  await db
-    .update(users)
-    .set({
-      name: input.name ?? before.name,
-      branchId: input.branchId === undefined ? before.branchId : input.branchId,
-      status: input.status ?? before.status,
-      updatedBy: actor.id,
-    })
-    .where(eq(users.id, userId));
+  const next = {
+    name: input.name ?? before.name,
+    branchId: input.branchId ?? before.branchId,
+    status: input.status ?? before.status,
+    updatedBy: actor.id,
+    updatedAt: new Date(),
+  };
+  await db.update(users).set(next).where(eq(users.id, userId));
 
   if (input.roleIds) {
     await setUserRoles(actor, userId, input.roleIds);
-  }
-
-  // suspend/activate also affects the Clerk account
-  if (input.status && input.status !== before.status) {
-    const client = await clerkClient();
-    try {
-      if (input.status === "SUSPENDED" && before.status !== "SUSPENDED") {
-        await client.users.banUser(before.externalId);
-        await revokeAllClerkSessions(client, before.externalId);
-      } else if (input.status !== "SUSPENDED" && before.status === "SUSPENDED") {
-        await client.users.unbanUser(before.externalId);
-      }
-    } catch (e) {
-      console.error("[users] clerk sync failed", e);
-    }
   }
 
   await recordAudit({
@@ -233,14 +236,15 @@ export async function resetUserPassword(
 ): Promise<string> {
   const [target] = await db.select().from(users).where(eq(users.id, userId));
   if (!target) throw new AppError("NOT_FOUND", "Pengguna tidak ditemukan.");
+
   const temp = `Tu-${Math.random().toString(36).slice(2, 8)}${Math.floor(Math.random() * 90 + 10)}!`;
-  const client = await clerkClient();
-  try {
-    await client.users.updateUser(target.externalId, { password: temp });
-    await revokeAllClerkSessions(client, target.externalId);
-  } catch (e) {
-    throw new AppError("INTERNAL", `Gagal reset password: ${(e as Error).message}`);
-  }
+  const { hash, salt } = hashPassword(temp);
+
+  await db
+    .update(users)
+    .set({ passwordHash: hash, passwordSalt: salt, updatedBy: actor.id })
+    .where(eq(users.id, userId));
+
   await recordAudit({
     userId: actor.id,
     companyId: target.companyId,
@@ -250,26 +254,6 @@ export async function resetUserPassword(
     resourceId: userId,
   });
   return temp;
-}
-
-/** Clerk v7 has no bulk revoke — list sessions then revoke each. */
-async function revokeAllClerkSessions(
-  client: Awaited<ReturnType<typeof clerkClient>>,
-  clerkUserId: string,
-) {
-  try {
-    const { data: sessions } = await client.sessions.getSessionList({
-      userId: clerkUserId,
-      limit: 50,
-    });
-    for (const session of sessions) {
-      if (session.status === "active") {
-        await client.sessions.revokeSession(session.id);
-      }
-    }
-  } catch (e) {
-    console.error("[users] session revoke failed", e);
-  }
 }
 
 export async function getUserCounts(companyId: string | null): Promise<number> {

@@ -16,14 +16,16 @@ export function getModuleManifest(code: string): ModuleManifest | undefined {
   return moduleManifests.find((m) => m.code === code);
 }
 
-/** permission code → owning module code (null = core) */
-export function buildPermissionModuleMap(): Map<string, string | null> {
+function createPermissionModuleMap(): ReadonlyMap<string, string | null> {
   const map = new Map<string, string | null>();
   for (const manifest of moduleManifests) {
     for (const p of manifest.permissions) map.set(p.code, manifest.code);
   }
   return map;
 }
+
+/** permission code → owning module code (null = core) */
+export const permissionModuleMap = createPermissionModuleMap();
 
 /** modules that depend on the given module code */
 export function getDependentsOf(code: string): ModuleManifest[] {

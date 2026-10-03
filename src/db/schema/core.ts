@@ -84,8 +84,10 @@ export const users = pgTable(
   "users",
   {
     id: uuid().primaryKey().defaultRandom(),
-    externalId: text().notNull(), // Clerk user id
+    externalId: text().notNull(), // local user id (UUID v4)
     email: text().notNull(),
+    passwordHash: text(), // bcrypt hash
+    passwordSalt: text(), // bcrypt salt
     name: text().notNull(),
     avatarUrl: text(),
     companyId: uuid().references(() => companies.id, { onDelete: "set null" }),
@@ -410,6 +412,44 @@ export const systemSettings = pgTable("system_settings", {
     .defaultNow()
     .$onUpdate(() => new Date()),
 });
+
+/* ------------------------------ Sessions ----------------------------- */
+export const sessions = pgTable(
+  "sessions",
+  {
+    id: text().primaryKey(), // session token
+    userId: uuid()
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    ip: text(),
+    userAgent: text(),
+    issuedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index("sessions_user_idx").on(t.userId),
+    index("sessions_expires_idx").on(t.expiresAt),
+  ],
+);
+
+/* ------------------------- Password resets ------------------------- */
+export const passwordResets = pgTable(
+  "password_resets",
+  {
+    id: text().primaryKey(),
+    userId: uuid()
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    ip: text(),
+    userAgent: text(),
+    requestedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index("password_resets_user_idx").on(t.userId),
+    index("password_resets_expires_idx").on(t.expiresAt),
+  ],
+);
 
 /* ----------------------------- Relations ----------------------------- */
 

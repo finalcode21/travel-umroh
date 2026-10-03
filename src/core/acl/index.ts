@@ -1,5 +1,5 @@
 import { AppError } from "@/lib/errors";
-import { buildPermissionModuleMap } from "@/modules/registry";
+import { permissionModuleMap } from "@/modules/registry";
 import type { CurrentUser } from "@/types";
 
 export interface PermissionDecision {
@@ -38,7 +38,7 @@ export function checkPermission(
   }
 
   // module subscription layer
-  const permissionModule = buildPermissionModuleMap().get(permission) ?? null;
+  const permissionModule = permissionModuleMap.get(permission) ?? null;
   if (permissionModule) {
     const access = user.moduleAccess[permissionModule];
     if (!access || access.access !== "ACTIVE") {

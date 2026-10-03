@@ -11,7 +11,11 @@ import {
 } from "@/db/schema";
 import { AppError } from "@/lib/errors";
 import type { CurrentUser, ModuleManifest } from "@/types";
-import { moduleManifests } from "@/modules/registry";
+import {
+  getDependentsOf,
+  getModuleManifest,
+  moduleManifests,
+} from "@/modules/registry";
 import { recordActivity } from "@/core/activity/service";
 import { recordAudit } from "@/core/audit/service";
 import { notify } from "@/core/notification/service";
@@ -28,7 +32,7 @@ function requireCompanyUser(user: CurrentUser): { companyId: string } {
 }
 
 export function getManifestOrThrow(code: string): ModuleManifest {
-  const manifest = moduleManifests.find((m) => m.code === code);
+  const manifest = getModuleManifest(code);
   if (!manifest) throw new AppError("NOT_FOUND", `Modul "${code}" tidak terdaftar.`);
   return manifest;
 }
@@ -486,9 +490,7 @@ export async function uninstallModule(user: CurrentUser, moduleCode: string) {
   if (!mod) throw new AppError("NOT_FOUND", "Modul belum terdaftar di registry.");
 
   // dependency check: active dependents block uninstall
-  const dependentCodes = moduleManifests
-    .filter((m) => m.dependencies?.includes(moduleCode))
-    .map((m) => m.code);
+  const dependentCodes = getDependentsOf(moduleCode).map((manifest) => manifest.code);
   if (dependentCodes.length > 0) {
     const activeDeps = await db
       .select({ code: modules.code })
