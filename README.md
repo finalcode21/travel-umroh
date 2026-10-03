@@ -1,94 +1,191 @@
-# Travel Umroh — Modular ERP Platform (Core V1)
+# Travel Umroh — Core System
 
-Platform ERP modular untuk travel agent umroh, dibangun sebagai **modular monolith**: Core System + Module Engine + Subscription + ACL, siap untuk business modules (CRM, Jamaah, Visa, …) sebagai modul terpisah.
+Modular monolith Next.js 16 ERP untuk Travel Agent Umroh (Core System: module engine,
+subscription, ACL/role-permission, local auth).
 
-## Stack
+```
+Travel Umroh Core System
+├── Module Engine      (manifest, install, subscribe, billing)
+├── Subscription       (plans, trial, expiry, cancellation)
+├── Access Control     (roles, permissions, audit log, activity log)
+├── Local Auth         (self-hosted email+password, bcryptjs, tu_session cookie)
+├── Tenant / Branches  (per-company data isolation)
+└── System Settings    (locale, currency, timezone, notifications)
+```
 
-- **Next.js 16** (App Router, TypeScript strict, Server Actions)
-- **Tailwind CSS v4 + shadcn/ui** — UI dens ala ERP
-- **PostgreSQL (Neon)** + **Drizzle ORM**
-- **Clerk** — authentication (session, password, protected routes)
-- **Vercel** — deployment target
+---
 
-## Setup
+## Tech Stack
+
+| Area | Choice |
+|---|---|
+| Framework | Next.js 16.3.8 (App Router, Turbopack) |
+| Language | TypeScript 5.x (strict) |
+| Styling | Tailwind CSS v4 + shadcn/ui (Radix UI) |
+| ORM / DB | Drizzle 0.45.3 + Neon PostgreSQL (`ep-morning-sun-b4lgyjs8`) |
+| Auth | Self-hosted node-ormacAuth (bcryptjs, `tu_session` cookie, 7-day session) |
+| UI | shadcn/ui + Radix UI 1.6.7, lucide-react, sonner, cmdk |
+| Icons / UI utils | lucide-react, class-variance-authority, clsx, tailwind-merge |
+| Validation | Zod 4.x |
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js 18+ (recommended 20/22 LTS)
+- pnpm / npm / yarn
+
+### Install
 
 ```bash
-# 1. dependencies
 npm install
+```
 
-# 2. environment
+### Env
+
+Copy `.env.example` to `.env.local` and fill in your Neon connection string(s):
+
+```bash
 cp .env.example .env.local
-#   isi DATABASE_URL (Neon pooled), Clerk keys, CLERK_WEBHOOK_SECRET
-
-# 3. migrasi core + seed
-npm run db:migrate
-npm run db:seed
-
-# 4. jalankan
-npm run dev
 ```
 
-### Clerk webhook (agar signup tersinkron ke database)
+Essential variables:
 
-Clerk Dashboard → Webhooks → Add endpoint:
+| Variable | Required | Description |
+|---|---|---|
+| `DATABASE_URL` | ✅ | Pooled Neon PostgreSQL connection string |
+| `DATABASE_URL_UNPOOLED` | ✅ | Unpooled Neon connection string (serverless / drizzle-kit) |
+| `NEON_BRANCH` | ✅ | Neon branch name (`production` in CI/production) |
+| `AUTH_SECRET` | ✅ | Secret for local JWT/session signing (generate e.g. `openssl rand -base64 32`) |
 
-- URL: `https://<domain>/api/webhooks/clerk` (dev: pakai `ngrok` / `localtunnel`)
-- Events: `user.created`, `user.updated`, `user.deleted`
-- Salin signing secret ke `CLERK_WEBHOOK_SECRET`
+> `.env.local` and `.env` are git-ignored. `DATABASE_URL` is never committed.
 
-> Tanpa webhook pun tetap jalan: user disinkronkan otomatis saat login pertama (inline provisioning).
+### Dev
 
-## Arsitektur
-
-```text
-src/
-├── app/                    # screens + server actions (thin layer)
-├── components/             # ui/ (shadcn), layout/, data-table/
-├── core/
-│   ├── auth/               # session (Clerk→DB sync), provisioning, user admin
-│   ├── acl/                # layered permission check (server-side)
-│   ├── tenant/             # companies, branches
-│   ├── modules/            # MODULE ENGINE: access map, lifecycle, settings
-│   ├── navigation/         # dynamic sidebar builder
-│   ├── rbac/               # roles & permission matrix
-│   ├── notification/ audit/ activity/ settings/
-├── modules/                # BUSINESS MODULES (satu-satunya import surface: registry.ts)
-│   ├── notes/              #   sample module (manifest, schema, service, actions, views)
-│   └── notes-pro/          #   sample dengan dependency ke notes
-├── db/                     # drizzle schema + client
-└── types/                  # kontrak manifest, ActionResult, ACL types
+```bash
+npm run dev        # http://localhost:3000
+npm run build      # type-safe production build
+npm run start      # production server
+npm run lint       # ESLint
+npm run typecheck  # tsc --noEmit
 ```
 
-Aturan kunci (PRD): **Core tidak boleh meng-import business module** — Core hanya membaca manifest lewat `src/modules/registry.ts`. Sebaliknya modul bebas memakai Core.
+---
 
-## Module lifecycle (PRD §14–19)
+## Database
 
+### Migrations
+
+```bash
+npm run db:migrate        # run core migrations from ./drizzle
+npm run db:generate       # generate a new migration (drizzle-kit)
+npm run db:studio         # Drizzle Studio (local DB GUI)
 ```
-AVAILABLE → Subscribe (trial) → Install (deps check → migration → permission → nav) → ACTIVE
-ACTIVE → Disable (nav hilang, data tetap) → Enable
-ACTIVE → Uninstall (data DIPERTAHANKAN) → UNINSTALLED
-Subscription expired → PAUSED (otomatis, data tetap) → Renew → ACTIVE
+
+### Seed
+
+```bash
+npm run db:seed           # bootstrap Super Admin + modules + system settings
 ```
 
-- **Dependency validation**: install `notes-pro` tanpa `notes` gagal; uninstall `notes` saat `notes-pro` aktif ditolak (409).
-- **Delete Module Data**: aksi terpisah, konfirmasi + audit log + backup warning.
-- **Uninstall policy**: data bisnis selalu dipertahankan.
+Seed does:
+1. Core permissions (15 rows)
+2. Platform `SUPER_ADMIN` role (`company_id = NULL`)
+3. Role-permission bindings
+4. **Super Admin bootstrap** (local email + password auth)
+5. Module registry (notes, notes-pro) + permissions
+6. System settings defaults
 
-## Validasi arsitektur (PRD §48)
+---
 
-Login sebagai akun perusahaan → **Apps** → subscribe **Notes** → Install → menu **Catatan** muncul di sidebar → Settings → Modul → Disable → menu hilang → Enable → uninstall → install **Notes Pro** (buktikan dependency) → coba uninstall Notes (ditolak) → periksa **Audit Log**.
+## Auth (Self-Hosted — Clerk removed)
 
-## Scripts
+Local email + password authentication, no third-party SDK.
 
-| Perintah | Fungsi |
+| Setting | Value |
 |---|---|
-| `npm run dev` | Dev server |
-| `npm run build` / `typecheck` | Build / strict typecheck |
-| `npm run db:generate` | Generate migration dari schema |
-| `npm run db:migrate` | Jalankan migration core |
-| `npm run db:seed` | Seed permission, role platform, registry modul |
-| `npm run db:studio` | Drizzle Studio |
+| Cookie name | `tu_session` |
+| Lifetime | 7 days |
+| Session store | `sessions` table (token → `user_id`) |
+| Password hashing | `bcryptjs` (cost 12), `passwordHash` / `passwordSalt` columns |
+| Session middleware | `src/proxy.ts` — unauthenticated → `/login?redirect=...` |
+| Routes | `/api/auth/login`, `/api/auth/signup`, `/api/auth/logout`, `/api/auth/me`, `/api/auth/forgot-password`, `/api/auth/reset-password` |
 
-## Multi-tenant
+### Default Super Admin (from `scripts/seed.ts`)
 
-Shared database dengan isolasi `company_id` / `branch_id`. User pertama = **Super Admin platform** (buat company via Settings → Companies). Signup berikutnya otomatis mendapat perusahaan + cabang HQ + role Company Admin (self-serve tenant).
+| Email | Password |
+|---|---|
+| `admin@demo.com` | `admin12345` |
+
+> The seed writes a bcrypt hash; the plaintext is only known at bootstrap time.
+
+---
+
+## Project Structure
+
+```
+src/
+├── app/                # Next.js App Router (pages, routes, layouts)
+├── components/
+│   ├── layout/         # app-shell, account dropdown, notifications
+│   └── ui/             # shadcn/ui re-exports + radix column compat
+├── core/               # domain: auth, rbac, permissions, modules, audit, activity
+├── db/                 # drizzle schema + migrations + pool
+├── lib/                # utils (cn, radix-ui, prisma, auth, errors, api, validations)
+├── modules/            # business modules (notes, notes-pro) + registry
+├── proxy.ts            # global auth middleware
+└── types/              # global TS types + path aliases
+scripts/                # db:migrate / db:seed / env bootstrap (load-env.ts first)
+drizzle/                # Drizzle migrations + snapshots
+```
+
+---
+
+## README Sections
+
+This README covers:
+- [Tech Stack](#tech-stack)
+- [Getting Started](#getting-started)
+- [Database](#database)
+- [Auth (Self-Hosted)](#auth-self-hosted---clerk-removed)
+- [Project Structure](#project-structure)
+- [Deployment (Vercel)](#deployment-vercel)
+
+---
+
+## Deployment (Vercel)
+
+This app is configured for Vercel (Next.js 16).
+
+1. **Link repo:** <https://github.com/finalcode21/travel-umroh> → Vercel
+2. **Build command:** `npm run build`
+3. **Install command:** `npm install`
+4. **Environment variables (required):**
+   - `DATABASE_URL` — Neon pooled connection string
+   - `AUTH_SECRET` — random secret for session/JWT signing
+   - `NEON_BRANCH` — `production`
+
+`.env.local` / `.env` are git-ignored and are **not** committed. Enter real values in the Vercel dashboard.
+
+---
+
+## API Endpoints
+
+### Auth
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/api/auth/login` | Local login (email + password) |
+| POST | `/api/auth/signup` | Self-serve tenant registration |
+| POST | `/api/auth/logout` | Invalidate session |
+| GET | `/api/auth/me` | Current user profile |
+| POST | `/api/auth/forgot-password` | Request password reset |
+| POST | `/api/auth/reset-password` | Reset password |
+
+---
+
+## License
+
+Proprietary — owned by finalcode21.
