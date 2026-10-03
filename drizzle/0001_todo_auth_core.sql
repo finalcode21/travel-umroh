@@ -1,0 +1,14 @@
+CREATE TABLE "password_resets" (
+	"id" text PRIMARY KEY NOT NULL,
+	"user_id" uuid NOT NULL,
+	"ip" text,
+	"user_agent" text,
+	"requested_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"expires_at" timestamp with time zone NOT NULL
+);
+--> statement-breakpoint
+ALTER TABLE "users" ADD COLUMN "password_hash" text;--> statement-breakpoint
+ALTER TABLE "users" ADD COLUMN "password_salt" text;--> statement-breakpoint
+ALTER TABLE "password_resets" ADD CONSTRAINT "password_resets_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "password_resets_user_idx" ON "password_resets" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX "password_resets_expires_idx" ON "password_resets" USING btree ("expires_at");
