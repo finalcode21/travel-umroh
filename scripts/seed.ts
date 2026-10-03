@@ -1,0 +1,123 @@
+import "dotenv/config";
+import { eq } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { Pool } from "pg";
+import * as schema from "../src/db/schema";
+import { CORE_PERMISSIONS, PLATFORM_ROLE } from "../src/core/permissions";
+import { moduleManifests } from "../src/modules/registry";
+import { SYSTEM_SETTINGS_DEFAULTS } from "../src/core/settings/service";
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL?.includes("sslmode=require")
+    ? { rejectUnauthorized: false }
+    : undefined,
+});
+const db = drizzle(pool, { schema, casing: "snake_case" });
+
+async function main() {
+  console.log("Seeding core data…");
+
+  // 1. core permissions
+  for (const p of CORE_PERMISSIONS) {
+    await db
+      .insert(schema.permissions)
+      .values({ code: p.code, name: p.name, description: p.description, moduleCode: null, isSystem: true })
+      .onConflictDoUpdate({
+        target: schema.permissions.code,
+        set: { name: p.name, description: p.description },
+      });
+  }
+  console.log(`✔ ${CORE_PERMISSIONS.length} core permissions`);
+
+  // 2. platform Super Admin role (companyId = null)
+  let [platformRole] = await db
+    .select()
+    .from(schema.roles)
+    .where(eq(schema.roles.code, PLATFORM_ROLE.code));
+  if (!platformRole) {
+    [platformRole] = await db
+      .insert(schema.roles)
+      .values({
+        companyId: null,
+        code: PLATFORM_ROLE.code,
+        name: PLATFORM_ROLE.name,
+        description: PLATFORM_ROLE.description,
+        isSystem: true,
+      })
+      .returning();
+    console.log("✔ Platform Super Admin role");
+  }
+
+  // 3. bind all known permissions to Super Admin
+  const allPerms = await db.select().from(schema.permissions);
+  for (const p of allPerms) {
+    await db
+      .insert(schema.rolePermissions)
+      .values({ roleId: platformRole.id, permissionId: p.id })
+      .onConflictDoNothing();
+  }
+
+  // 4. module registry from manifests
+  for (const m of moduleManifests) {
+    await db
+      .insert(schema.modules)
+      .values({
+        code: m.code,
+        name: m.name,
+        version: m.version,
+        description: m.description,
+        category: m.category,
+        author: m.author,
+        priceMonthly: m.priceMonthly ?? 0,
+        billingCycle: m.billingCycle ?? "MONTHLY",
+        trialDays: m.trialDays,
+      })
+      .onConflictDoUpdate({
+        target: schema.modules.code,
+        set: {
+          name: m.name,
+          version: m.version,
+          description: m.description,
+          category: m.category,
+          priceMonthly: m.priceMonthly ?? 0,
+          trialDays: m.trialDays,
+        },
+      });
+    for (const dep of m.dependencies ?? []) {
+      await db
+        .insert(schema.moduleDependencies)
+        .values({ moduleCode: m.code, dependsOnCode: dep })
+        .onConflictDoNothing();
+    }
+    for (const p of m.permissions) {
+      await db
+        .insert(schema.permissions)
+        .values({ code: p.code, name: p.name, description: p.description, moduleCode: m.code, isSystem: true })
+        .onConflictDoUpdate({
+          target: schema.permissions.code,
+          set: { name: p.name, moduleCode: m.code },
+        });
+    }
+  }
+  console.log(`✔ ${moduleManifests.length} modules registered (notes, notes-pro)`);
+
+  // 5. system settings defaults
+  for (const [key, value] of Object.entries(SYSTEM_SETTINGS_DEFAULTS)) {
+    await db
+      .insert(schema.systemSettings)
+      .values({ key, value: value as never })
+      .onConflictDoNothing();
+  }
+  console.log("✔ system settings defaults");
+
+  console.log("\nSelesai. Langkah berikutnya:");
+  console.log("1. Sign up melalui /signup — user pertama menjadi Super Admin platform.");
+  console.log("2. User berikutnya otomatis mendapat perusahaan sendiri (tenant onboarding).");
+  await pool.end();
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

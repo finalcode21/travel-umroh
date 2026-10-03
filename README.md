@@ -1,36 +1,94 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Travel Umroh — Modular ERP Platform (Core V1)
 
-## Getting Started
+Platform ERP modular untuk travel agent umroh, dibangun sebagai **modular monolith**: Core System + Module Engine + Subscription + ACL, siap untuk business modules (CRM, Jamaah, Visa, …) sebagai modul terpisah.
 
-First, run the development server:
+## Stack
+
+- **Next.js 16** (App Router, TypeScript strict, Server Actions)
+- **Tailwind CSS v4 + shadcn/ui** — UI dens ala ERP
+- **PostgreSQL (Neon)** + **Drizzle ORM**
+- **Clerk** — authentication (session, password, protected routes)
+- **Vercel** — deployment target
+
+## Setup
 
 ```bash
+# 1. dependencies
+npm install
+
+# 2. environment
+cp .env.example .env.local
+#   isi DATABASE_URL (Neon pooled), Clerk keys, CLERK_WEBHOOK_SECRET
+
+# 3. migrasi core + seed
+npm run db:migrate
+npm run db:seed
+
+# 4. jalankan
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Clerk webhook (agar signup tersinkron ke database)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Clerk Dashboard → Webhooks → Add endpoint:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- URL: `https://<domain>/api/webhooks/clerk` (dev: pakai `ngrok` / `localtunnel`)
+- Events: `user.created`, `user.updated`, `user.deleted`
+- Salin signing secret ke `CLERK_WEBHOOK_SECRET`
 
-## Learn More
+> Tanpa webhook pun tetap jalan: user disinkronkan otomatis saat login pertama (inline provisioning).
 
-To learn more about Next.js, take a look at the following resources:
+## Arsitektur
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```text
+src/
+├── app/                    # screens + server actions (thin layer)
+├── components/             # ui/ (shadcn), layout/, data-table/
+├── core/
+│   ├── auth/               # session (Clerk→DB sync), provisioning, user admin
+│   ├── acl/                # layered permission check (server-side)
+│   ├── tenant/             # companies, branches
+│   ├── modules/            # MODULE ENGINE: access map, lifecycle, settings
+│   ├── navigation/         # dynamic sidebar builder
+│   ├── rbac/               # roles & permission matrix
+│   ├── notification/ audit/ activity/ settings/
+├── modules/                # BUSINESS MODULES (satu-satunya import surface: registry.ts)
+│   ├── notes/              #   sample module (manifest, schema, service, actions, views)
+│   └── notes-pro/          #   sample dengan dependency ke notes
+├── db/                     # drizzle schema + client
+└── types/                  # kontrak manifest, ActionResult, ACL types
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Aturan kunci (PRD): **Core tidak boleh meng-import business module** — Core hanya membaca manifest lewat `src/modules/registry.ts`. Sebaliknya modul bebas memakai Core.
 
-## Deploy on Vercel
+## Module lifecycle (PRD §14–19)
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```
+AVAILABLE → Subscribe (trial) → Install (deps check → migration → permission → nav) → ACTIVE
+ACTIVE → Disable (nav hilang, data tetap) → Enable
+ACTIVE → Uninstall (data DIPERTAHANKAN) → UNINSTALLED
+Subscription expired → PAUSED (otomatis, data tetap) → Renew → ACTIVE
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **Dependency validation**: install `notes-pro` tanpa `notes` gagal; uninstall `notes` saat `notes-pro` aktif ditolak (409).
+- **Delete Module Data**: aksi terpisah, konfirmasi + audit log + backup warning.
+- **Uninstall policy**: data bisnis selalu dipertahankan.
+
+## Validasi arsitektur (PRD §48)
+
+Login sebagai akun perusahaan → **Apps** → subscribe **Notes** → Install → menu **Catatan** muncul di sidebar → Settings → Modul → Disable → menu hilang → Enable → uninstall → install **Notes Pro** (buktikan dependency) → coba uninstall Notes (ditolak) → periksa **Audit Log**.
+
+## Scripts
+
+| Perintah | Fungsi |
+|---|---|
+| `npm run dev` | Dev server |
+| `npm run build` / `typecheck` | Build / strict typecheck |
+| `npm run db:generate` | Generate migration dari schema |
+| `npm run db:migrate` | Jalankan migration core |
+| `npm run db:seed` | Seed permission, role platform, registry modul |
+| `npm run db:studio` | Drizzle Studio |
+
+## Multi-tenant
+
+Shared database dengan isolasi `company_id` / `branch_id`. User pertama = **Super Admin platform** (buat company via Settings → Companies). Signup berikutnya otomatis mendapat perusahaan + cabang HQ + role Company Admin (self-serve tenant).
