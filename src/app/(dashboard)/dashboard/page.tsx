@@ -6,7 +6,7 @@ import {
   PackageX,
   Users,
 } from "lucide-react";
-import { getCurrentUser, isClerkConfigured } from "@/core/auth/session";
+import { getCurrentUser } from "@/core/auth/session";
 import { expireDueSubscriptions, getModuleAccessMap } from "@/core/modules/access";
 import { syncModuleRegistry } from "@/core/modules/engine";
 import { listRecentActivities, listPlatformActivities } from "@/core/activity/service";
@@ -46,7 +46,7 @@ export const metadata = { title: "Dashboard" };
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
-  if (!isClerkConfigured()) return null;
+
   const user = await getCurrentUser();
   if (!user) return null;
 

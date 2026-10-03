@@ -1,8 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { ClerkProvider } from "@clerk/nextjs";
 import { Toaster } from "@/components/ui/sonner";
-import { isClerkConfigured } from "@/core/auth/session";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -29,7 +27,6 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const clerkReady = isClerkConfigured();
   return (
     <html
       lang="id"
@@ -37,7 +34,7 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col">
-        {clerkReady ? <ClerkProvider>{children}</ClerkProvider> : children}
+        {children}
         <Toaster richColors position="top-right" />
       </body>
     </html>

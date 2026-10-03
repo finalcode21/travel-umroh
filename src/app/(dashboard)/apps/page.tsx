@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ArrowRight, Boxes } from "lucide-react";
-import { getCurrentUser, isClerkConfigured } from "@/core/auth/session";
+import { getCurrentUser } from "@/core/auth/session";
 import { expireDueSubscriptions } from "@/core/modules/access";
 import { syncModuleRegistry } from "@/core/modules/engine";
 import { moduleManifests } from "@/modules/registry";
@@ -32,7 +32,7 @@ const CATEGORY_LABEL: Record<string, string> = {
 };
 
 export default async function AppsPage() {
-  if (!isClerkConfigured()) return null;
+
   const user = await getCurrentUser();
   if (!user) return null;
 

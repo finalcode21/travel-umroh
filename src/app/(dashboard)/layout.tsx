@@ -1,23 +1,15 @@
 import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
-import { getCurrentUser, isClerkConfigured } from "@/core/auth/session";
+import { getCurrentUser } from "@/core/auth/session";
 import { buildNavigation } from "@/core/navigation/build";
 import {
   countUnread,
   listNotifications,
 } from "@/core/notification/service";
 import { AppShell } from "@/components/layout/app-shell";
-import { SetupNotice } from "@/components/setup-notice";
 
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
-  if (!isClerkConfigured()) {
-    return (
-      <SetupNotice
-        title="Authentication belum dikonfigurasi"
-        missing={["NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "CLERK_SECRET_KEY", "DATABASE_URL"]}
-      />
-    );
-  }
+
 
   const user = await getCurrentUser();
   if (!user) redirect("/login");

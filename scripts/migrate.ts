@@ -1,14 +1,11 @@
-import "dotenv/config";
+// Must be first: loads .env.local before anything reads process.env.
+import "./load-env";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
 
 async function main() {
-  const url = process.env.DATABASE_URL;
-  if (!url) {
-    console.error("DATABASE_URL is not set. Copy .env.example to .env.local first.");
-    process.exit(1);
-  }
+  const url = process.env.DATABASE_URL!;
   const pool = new Pool({
     connectionString: url,
     ssl: url.includes("sslmode=require") ? { rejectUnauthorized: false } : undefined,

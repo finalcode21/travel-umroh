@@ -4,7 +4,7 @@ import { z } from "zod";
 import { runAction } from "@/lib/action";
 import { parseWith, createUserSchema, updateUserSchema } from "@/lib/validation";
 import {
-  createUserWithClerk,
+  createUserWithLocal,
   resetUserPassword,
   updateUser,
 } from "@/core/auth/users-admin";
@@ -14,7 +14,7 @@ const resetSchema = z.object({ userId: z.string().uuid() });
 export async function createUserAction(input: unknown) {
   return runAction("user.manage", async (user) => {
     const data = parseWith(createUserSchema, input);
-    return createUserWithClerk(user, data);
+    return createUserWithLocal(user, data);
   });
 }
 

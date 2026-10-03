@@ -102,7 +102,7 @@ export function UsersTableClient({
         });
     setBusy(false);
     if (result.ok) {
-      toast.success(editing ? "Pengguna diperbarui" : "Pengguna dibuat (akun Clerk + database)");
+      toast.success(editing ? "Pengguna diperbarui" : "Pengguna baru berhasil dibuat.");
       setCreateOpen(false);
       setEditing(null);
       router.refresh();
@@ -253,7 +253,7 @@ export function UsersTableClient({
                       minLength={8}
                     />
                     <p className="text-xs text-muted-foreground">
-                      Akun Clerk dibuat otomatis; minta pengguna mengganti password.
+                      Password dibuat langsung di database; minta pengguna mengganti.
                     </p>
                   </div>
                 </>

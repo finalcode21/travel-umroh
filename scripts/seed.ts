@@ -1,4 +1,5 @@
-import "dotenv/config";
+// Must be first: loads .env.local before src/db reads process.env.
+import "./load-env";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
@@ -6,6 +7,7 @@ import * as schema from "../src/db/schema";
 import { CORE_PERMISSIONS, PLATFORM_ROLE } from "../src/core/permissions";
 import { moduleManifests } from "../src/modules/registry";
 import { SYSTEM_SETTINGS_DEFAULTS } from "../src/core/settings/service";
+import { signUp } from "../src/core/auth/sessions";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -14,6 +16,10 @@ const pool = new Pool({
     : undefined,
 });
 const db = drizzle(pool, { schema, casing: "snake_case" });
+
+const DEFAULT_SUPER_ADMIN_EMAIL = process.env.SUPER_ADMIN_EMAIL ?? "admin@demo.com";
+const DEFAULT_SUPER_ADMIN_PASSWORD = process.env.SUPER_ADMIN_PASSWORD ?? "admin12345";
+const DEFAULT_SUPER_ADMIN_NAME = process.env.SUPER_ADMIN_NAME ?? "Platform Super Admin";
 
 async function main() {
   console.log("Seeding core data…");
@@ -56,6 +62,23 @@ async function main() {
       .insert(schema.rolePermissions)
       .values({ roleId: platformRole.id, permissionId: p.id })
       .onConflictDoNothing();
+  }
+
+  // 3b. Bootstrap the platform Super Admin account (local email+password auth).
+  // Must run AFTER the SUPER_ADMIN role exists — signUp() binds that role.
+  const [existingAdmin] = await db
+    .select()
+    .from(schema.users)
+    .where(eq(schema.users.email, DEFAULT_SUPER_ADMIN_EMAIL));
+  if (existingAdmin) {
+    console.log(`⚠ Super Admin ${DEFAULT_SUPER_ADMIN_EMAIL} already exists — skipping bootstrap.`);
+  } else {
+    const { user } = await signUp({
+      name: DEFAULT_SUPER_ADMIN_NAME,
+      email: DEFAULT_SUPER_ADMIN_EMAIL,
+      password: DEFAULT_SUPER_ADMIN_PASSWORD,
+    });
+    console.log(`✔ Super Admin ${DEFAULT_SUPER_ADMIN_EMAIL} created (isPlatformAdmin=${user.isPlatformAdmin})`);
   }
 
   // 4. module registry from manifests
@@ -111,9 +134,11 @@ async function main() {
   }
   console.log("✔ system settings defaults");
 
-  console.log("\nSelesai. Langkah berikutnya:");
-  console.log("1. Sign up melalui /signup — user pertama menjadi Super Admin platform.");
-  console.log("2. User berikutnya otomatis mendapat perusahaan sendiri (tenant onboarding).");
+  console.log("\nSelesai.");
+  console.log("🌐 Login di /login dengan:");
+  console.log(`   Email    : ${DEFAULT_SUPER_ADMIN_EMAIL}`);
+  console.log(`   Password : ${DEFAULT_SUPER_ADMIN_PASSWORD}`);
+  console.log("   (Set SUPER_ADMIN_EMAIL / SUPER_ADMIN_PASSWORD untuk mengubah default.)");
   await pool.end();
 }
 
