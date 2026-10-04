@@ -11,16 +11,19 @@ import {
   setModuleEnabled,
   subscribeModule,
   uninstallModule,
+  upgradeModule,
 } from "@/core/modules/engine";
+import { moduleActionPermissions } from "@/core/modules/action-permissions";
 import {
   renewSubscriptionSchema,
   moduleActionSchema,
+  uninstallModuleSchema,
   saveModuleSettingsSchema,
   parseWith,
 } from "@/lib/validation";
 
 export async function subscribeModuleAction(input: unknown) {
-  return runAction("module.manage", async (user) => {
+  return runAction(moduleActionPermissions("subscribe"), async (user) => {
     const { moduleCode } = parseWith(moduleActionSchema, input);
     await subscribeModule(user, moduleCode);
     return { moduleCode };
@@ -28,14 +31,21 @@ export async function subscribeModuleAction(input: unknown) {
 }
 
 export async function installModuleAction(input: unknown) {
-  return runAction("module.manage", async (user) => {
+  return runAction(moduleActionPermissions("install"), async (user) => {
     const { moduleCode } = parseWith(moduleActionSchema, input);
     return installModule(user, moduleCode);
   });
 }
 
+export async function upgradeModuleAction(input: unknown) {
+  return runAction(moduleActionPermissions("upgrade"), async (user) => {
+    const { moduleCode } = parseWith(moduleActionSchema, input);
+    return upgradeModule(user, moduleCode);
+  });
+}
+
 export async function enableModuleAction(input: unknown) {
-  return runAction("module.manage", async (user) => {
+  return runAction(moduleActionPermissions("enable"), async (user) => {
     const { moduleCode } = parseWith(moduleActionSchema, input);
     await setModuleEnabled(user, moduleCode, true);
     return { moduleCode };
@@ -43,7 +53,7 @@ export async function enableModuleAction(input: unknown) {
 }
 
 export async function disableModuleAction(input: unknown) {
-  return runAction("module.manage", async (user) => {
+  return runAction(moduleActionPermissions("disable"), async (user) => {
     const { moduleCode } = parseWith(moduleActionSchema, input);
     await setModuleEnabled(user, moduleCode, false);
     return { moduleCode };
@@ -51,14 +61,14 @@ export async function disableModuleAction(input: unknown) {
 }
 
 export async function uninstallModuleAction(input: unknown) {
-  return runAction("module.manage", async (user) => {
-    const { moduleCode } = parseWith(moduleActionSchema, input);
-    return uninstallModule(user, moduleCode);
+  return runAction(moduleActionPermissions("uninstall"), async (user) => {
+    const { moduleCode, confirmDataLoss } = parseWith(uninstallModuleSchema, input);
+    return uninstallModule(user, moduleCode, { confirmDataLoss });
   });
 }
 
 export async function deleteModuleDataAction(input: unknown) {
-  return runAction("module.manage", async (user) => {
+  return runAction(moduleActionPermissions("deleteData"), async (user) => {
     const { moduleCode } = parseWith(moduleActionSchema, input);
     await deleteModuleData(user, moduleCode);
     return { moduleCode };
@@ -85,7 +95,7 @@ export async function cancelSubscriptionAction(input: unknown) {
 }
 
 export async function saveModuleSettingsAction(input: unknown) {
-  return runAction("module.manage", async (user) => {
+  return runAction(moduleActionPermissions("configure"), async (user) => {
     const { moduleCode, values } = parseWith(saveModuleSettingsSchema, input);
     await saveModuleSettings(user, moduleCode, values);
     return { moduleCode };

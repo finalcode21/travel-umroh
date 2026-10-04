@@ -5,6 +5,7 @@ import {
   moduleSubscriptions,
   modules,
 } from "@/db/schema";
+import { isUpdateAvailable } from "@/lib/semver";
 import type { ModuleAccess, ModuleAccessState } from "@/types";
 
 interface RawRow {
@@ -12,6 +13,9 @@ interface RawRow {
   installStatus: string | null;
   subStatus: string | null;
   subExpiresAt: Date | null;
+  installedVersion?: string | null;
+  lastError?: string | null;
+  availableVersion?: string | null;
 }
 
 /**
@@ -56,12 +60,23 @@ export function computeModuleAccess(row: RawRow): ModuleAccess {
     }
   }
 
+  const availableVersion = row.availableVersion ?? undefined;
+  const installedVersion = row.installStatus ? (row.installedVersion ?? null) : undefined;
+  const updateAvailable =
+    installedVersion != null && availableVersion != null
+      ? isUpdateAvailable(installedVersion, availableVersion)
+      : false;
+
   return {
     moduleCode: row.code,
     subscriptionStatus: subEffective,
     subscriptionExpiresAt: row.subExpiresAt?.toISOString() ?? null,
     installStatus,
     access,
+    availableVersion,
+    installedVersion: installedVersion ?? null,
+    updateAvailable,
+    lastError: row.lastError ?? null,
   };
 }
 
@@ -75,6 +90,9 @@ export async function getModuleAccessMap(
       installStatus: moduleInstallations.status,
       subStatus: moduleSubscriptions.status,
       subExpiresAt: moduleSubscriptions.expiresAt,
+      installedVersion: moduleInstallations.installedVersion,
+      lastError: moduleInstallations.lastError,
+      availableVersion: modules.version,
     })
     .from(modules)
     .leftJoin(

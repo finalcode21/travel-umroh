@@ -4,6 +4,8 @@ import { ArrowLeft, ShieldCheck } from "lucide-react";
 import { getCurrentUser } from "@/core/auth/session";
 import { getModuleAccessMap } from "@/core/modules/access";
 import { getModuleSettingsMap } from "@/core/modules/engine";
+import { getDependentManifests, normalizeDependency } from "@/core/modules/dependency";
+import { listModuleLifecycleAudit } from "@/core/audit/service";
 import { moduleManifests } from "@/modules/registry";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -39,15 +41,27 @@ export default async function ModuleDetailPage({
   const manifest = moduleManifests.find((m) => m.code === moduleCode);
   if (!manifest) notFound();
 
-  const access = user.companyId
-    ? (await getModuleAccessMap(user.companyId))[manifest.code]
-    : undefined;
+  const accessMap = user.companyId ? await getModuleAccessMap(user.companyId) : {};
+  const access = accessMap[manifest.code];
   const settings = user.companyId
     ? await getModuleSettingsMap(user.companyId, manifest.code)
     : {};
+  const audit = user.companyId
+    ? await listModuleLifecycleAudit(user.companyId, manifest.code)
+    : [];
 
   const statusValue =
     access?.access ?? (user.isPlatformAdmin ? "REGISTRY_ONLY" : "NOT_SUBSCRIBED");
+
+  // installed dependents for THIS company (any state ≠ UNINSTALLED)
+  const dependents = getDependentManifests(manifest.code, moduleManifests)
+    .filter((dep) => {
+      const st = accessMap[dep.code]?.installStatus;
+      return st !== undefined && st !== "NOT_INSTALLED" && st !== "UNINSTALLED";
+    })
+    .map((dep) => dep.name);
+
+  const dependencies = (manifest.dependencies ?? []).map(normalizeDependency);
 
   return (
     <div className="space-y-6">
@@ -60,7 +74,12 @@ export default async function ModuleDetailPage({
         </Link>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 className="text-xl font-semibold">{manifest.name}</h1>
+            <h1 className="text-xl font-semibold">
+              {manifest.name}{" "}
+              <span className="text-sm font-normal text-muted-foreground">
+                v{manifest.version}
+              </span>
+            </h1>
             <p className="text-sm text-muted-foreground">{manifest.description}</p>
           </div>
           {user.companyId && access && (
@@ -69,10 +88,20 @@ export default async function ModuleDetailPage({
               moduleName={manifest.name}
               access={access}
               size="default"
+              uninstallPolicy={manifest.uninstallPolicy ?? "KEEP_DATA"}
+              requiredBy={dependents}
             />
           )}
         </div>
       </div>
+
+      {access?.lastError && (
+        <Card className="border-destructive/50">
+          <CardContent className="pt-4 text-sm text-destructive">
+            <strong>Error terakhir:</strong> {access.lastError}
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
@@ -81,8 +110,17 @@ export default async function ModuleDetailPage({
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
             <Row label="Kode" value={<span className="font-mono text-xs">{manifest.code}</span>} />
-            <Row label="Versi" value={manifest.version} />
+            <Row label="Versi tersedia" value={`v${manifest.version}`} />
+            <Row
+              label="Versi ter-install"
+              value={
+                access?.installedVersion
+                  ? `v${access.installedVersion}${access.updateAvailable ? " (update tersedia)" : ""}`
+                  : "—"
+              }
+            />
             <Row label="Kategori" value={manifest.category} />
+            <Row label="Author" value={manifest.author ?? "—"} />
             <Row
               label="Harga"
               value={
@@ -92,13 +130,17 @@ export default async function ModuleDetailPage({
               }
             />
             <Row label="Trial" value={`${manifest.trialDays ?? 14} hari`} />
-            <Row label="Status di perusahaan Anda" value={<StatusBadge access={statusValue} />} />
+            <Row label="Status di perusahaan Anda" value={<StatusBadge status={statusValue} />} />
             {access?.subscriptionExpiresAt && (
               <Row
                 label="Berlaku sampai"
                 value={new Date(access.subscriptionExpiresAt).toLocaleDateString("id-ID")}
               />
             )}
+            <Row
+              label="Kebijakan uninstall"
+              value={<Badge variant="outline">{manifest.uninstallPolicy ?? "KEEP_DATA"}</Badge>}
+            />
           </CardContent>
         </Card>
 
@@ -106,24 +148,28 @@ export default async function ModuleDetailPage({
           <CardHeader>
             <CardTitle className="text-base">Dependencies</CardTitle>
             <CardDescription>
-              Modul lain yang harus aktif sebelum modul ini bisa di-install.
+              Modul lain yang harus aktif (dengan versi yang kompatibel) sebelum
+              modul ini bisa di-install.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {manifest.dependencies && manifest.dependencies.length > 0 ? (
+            {dependencies.length > 0 ? (
               <div className="space-y-2">
-                {manifest.dependencies.map((dep) => {
-                  const depManifest = moduleManifests.find((m) => m.code === dep);
-                  const depAccess = user.moduleAccess[dep];
+                {dependencies.map((dep) => {
+                  const depManifest = moduleManifests.find((m) => m.code === dep.module);
+                  const depAccess = accessMap[dep.module];
                   const ok = depAccess?.access === "ACTIVE";
                   return (
                     <div
-                      key={dep}
+                      key={dep.module}
                       className="flex items-center justify-between rounded-md border px-3 py-2 text-sm"
                     >
                       <span>
-                        {depManifest?.name ?? dep}{" "}
-                        <span className="font-mono text-xs text-muted-foreground">v{depManifest?.version}</span>
+                        {depManifest?.name ?? dep.module}{" "}
+                        <span className="font-mono text-xs text-muted-foreground">
+                          v{depManifest?.version}
+                          {dep.version ? ` (${dep.version})` : ""}
+                        </span>
                       </span>
                       <Badge variant={ok ? "secondary" : "outline"}>
                         {ok ? "aktif" : "belum aktif"}
@@ -134,6 +180,12 @@ export default async function ModuleDetailPage({
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">Tidak ada dependency.</p>
+            )}
+            {dependents.length > 0 && (
+              <div className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs">
+                <strong>Required by:</strong> {dependents.join(", ")} — modul ini
+                tidak dapat di-uninstall selama modul tersebut masih ter-install.
+              </div>
             )}
           </CardContent>
         </Card>
@@ -191,12 +243,56 @@ export default async function ModuleDetailPage({
         </Card>
       </div>
 
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Aktivitas (Audit)</CardTitle>
+          <CardDescription>
+            Riwayat lifecycle operation modul ini untuk perusahaan Anda.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {audit.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Belum ada aktivitas.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {audit.map((row) => {
+                const meta = (row.newValues ?? {}) as Record<string, unknown>;
+                const versionInfo =
+                  meta.fromVersion && meta.toVersion
+                    ? ` (v${String(meta.fromVersion)} → v${String(meta.toVersion)})`
+                    : meta.version
+                      ? ` (v${String(meta.version)})`
+                      : "";
+                return (
+                  <div
+                    key={row.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-1.5 text-xs"
+                  >
+                    <span>
+                      <span className="font-mono">{row.action}</span>
+                      {versionInfo}
+                      {meta.errorCode ? (
+                        <span className="text-destructive"> — {String(meta.errorCode)}</span>
+                      ) : null}
+                    </span>
+                    <span className="text-muted-foreground">
+                      {row.userName ?? "—"} ·{" "}
+                      {new Date(row.createdAt).toLocaleString("id-ID")}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <Card className="border-destructive/50">
         <CardHeader>
           <CardTitle className="text-base text-destructive">Danger Zone</CardTitle>
           <CardDescription>
-            Uninstall tidak menghapus data. Penghapusan data bersifat permanen dan
-            terpisah dari uninstall.
+            Uninstall tidak menghapus data (policy {manifest.uninstallPolicy ?? "KEEP_DATA"}).
+            Penghapusan data bersifat permanen dan terpisah dari uninstall.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-3">
@@ -222,8 +318,11 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-function StatusBadge({ access }: { access: string }) {
-  const map: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
+function StatusBadge({ status }: { status: string }) {
+  const map: Record<
+    string,
+    { label: string; variant: "default" | "secondary" | "destructive" | "outline" }
+  > = {
     ACTIVE: { label: "Aktif", variant: "default" },
     SUBSCRIBED: { label: "Subscribed, belum install", variant: "secondary" },
     DISABLED: { label: "Disabled", variant: "outline" },
@@ -232,6 +331,6 @@ function StatusBadge({ access }: { access: string }) {
     NOT_SUBSCRIBED: { label: "Belum subscribe", variant: "outline" },
     REGISTRY_ONLY: { label: "Lihat dari platform admin", variant: "outline" },
   };
-  const item = map[access] ?? { label: access, variant: "outline" as const };
+  const item = map[status] ?? { label: status, variant: "outline" as const };
   return <Badge variant={item.variant}>{item.label}</Badge>;
 }
