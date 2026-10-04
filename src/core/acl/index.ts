@@ -2,17 +2,19 @@ import { AppError } from "@/lib/errors";
 import { permissionModuleMap } from "@/modules/registry";
 import type { CurrentUser } from "@/types";
 
-export interface PermissionDecision {
-  allowed: boolean;
-  /** why access was denied (shown to user / logged) */
-  reason?: string;
-  /** the layer that rejected, per PRD §11 */
-  layer:
-    | "USER_STATUS"
-    | "COMPANY_STATUS"
-    | "MODULE_SUBSCRIPTION"
-    | "PERMISSION";
-}
+export type PermissionDecision =
+  | { allowed: true }
+  | {
+      allowed: false;
+      /** why access was denied (shown to user / logged) */
+      reason?: string;
+      /** the layer that rejected, per PRD §11 */
+      layer:
+        | "USER_STATUS"
+        | "COMPANY_STATUS"
+        | "MODULE_SUBSCRIPTION"
+        | "PERMISSION";
+    };
 
 /**
  * Layered server-side authorization:
@@ -102,7 +104,7 @@ export function assertAnyPermission(
   );
   const reasons = new Set<string>();
   for (const d of denied) {
-    if (d.reason) reasons.add(d.reason);
+    if (!d.allowed && d.reason) reasons.add(d.reason);
   }
   throw new AppError(
     "FORBIDDEN",

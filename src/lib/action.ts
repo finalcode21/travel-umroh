@@ -1,11 +1,11 @@
 import "server-only";
 import { toPublicError } from "@/lib/errors";
-import { assertPermission } from "@/core/acl";
+import { assertAnyPermission, assertPermission } from "@/core/acl";
 import { requireUserWithFullProfile } from "@/core/auth/session";
 import type { ActionResult, CurrentUser } from "@/types";
 
 export { requireUser } from "@/core/auth/session";
-export { assertPermission, canAccessBranch } from "@/core/acl";
+export { assertAnyPermission, assertPermission, canAccessBranch } from "@/core/acl";
 export { getRequestMeta } from "@/core/auth/session";
 
 /**
@@ -17,12 +17,15 @@ export { getRequestMeta } from "@/core/auth/session";
  * core services and the ACL operate on.
  */
 export async function runAction<T>(
-  permission: string | null,
+  permission: string | readonly string[] | null,
   fn: (user: CurrentUser) => Promise<T>,
 ): Promise<ActionResult<T>> {
   try {
     const user = await requireUserWithFullProfile();
-    if (permission) assertPermission(user, permission);
+    if (permission) {
+      if (typeof permission === "string") assertPermission(user, permission);
+      else assertAnyPermission(user, permission);
+    }
     const data = await fn(user);
     return { ok: true, data };
   } catch (e) {
