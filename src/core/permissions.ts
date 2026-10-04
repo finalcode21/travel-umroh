@@ -14,7 +14,18 @@ export const CORE_PERMISSIONS: ModulePermissionDef[] = [
   { code: "role.view", name: "Lihat Role" },
   { code: "role.manage", name: "Kelola Role & Permission" },
   { code: "module.view", name: "Lihat Apps Marketplace" },
-  { code: "module.manage", name: "Kelola Modul (subscribe/install/uninstall)" },
+  { code: "module.manage", name: "Kelola Modul (semua lifecycle action)" },
+  // Granular module lifecycle permissions (PRD §34). module.manage implies
+  // all of them (see MODULE_ACTION_PERMISSIONS) so existing seeded roles
+  // keep working unchanged.
+  { code: "module.read", name: "Lihat detail modul" },
+  { code: "module.subscribe", name: "Subscribe modul" },
+  { code: "module.install", name: "Install modul" },
+  { code: "module.enable", name: "Enable modul" },
+  { code: "module.disable", name: "Disable modul" },
+  { code: "module.upgrade", name: "Upgrade modul" },
+  { code: "module.uninstall", name: "Uninstall modul" },
+  { code: "module.configure", name: "Konfigurasi modul" },
   { code: "subscription.view", name: "Lihat Langganan" },
   { code: "subscription.manage", name: "Kelola Langganan" },
   { code: "settings.manage", name: "Kelola Pengaturan" },

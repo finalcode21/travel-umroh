@@ -148,7 +148,10 @@ export const roles = pgTable(
     createdBy: uuid(),
     updatedBy: uuid(),
   },
-  (t) => [index("roles_company_idx").on(t.companyId)],
+  (t) => [
+    unique("roles_company_code_unique").on(t.companyId, t.code),
+    index("roles_company_idx").on(t.companyId),
+  ],
 );
 
 export const permissions = pgTable(
@@ -257,6 +260,8 @@ export const moduleInstallations = pgTable(
       .references(() => modules.id, { onDelete: "cascade" }),
     status: moduleInstallStatusEnum().notNull().default("PENDING"),
     installedVersion: text(),
+    /** last lifecycle failure message, for actionable admin display (PRD §30) */
+    lastError: text(),
     config: jsonb().$type<Record<string, unknown>>(),
     installedAt: timestamp({ withTimezone: true }),
     uninstalledAt: timestamp({ withTimezone: true }),

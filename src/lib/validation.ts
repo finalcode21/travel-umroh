@@ -106,6 +106,11 @@ export const moduleActionSchema = z.object({
   moduleCode: z.string().min(2).max(60).regex(/^[a-z0-9-]+$/),
 });
 
+/** Uninstall carries an explicit data-loss confirmation when required (PRD §19). */
+export const uninstallModuleSchema = moduleActionSchema.extend({
+  confirmDataLoss: z.boolean().optional(),
+});
+
 export const renewSubscriptionSchema = z.object({
   subscriptionId: z.string().uuid(),
   /** renew for N months (extends expires_at) */

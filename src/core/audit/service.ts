@@ -94,6 +94,36 @@ export async function listAuditLogs(filter: AuditFilter) {
   return { rows, total: Number(total), page, pageSize };
 }
 
+/**
+ * Lifecycle audit trail for one module (PRD §32/§42): resource="module",
+ * resourceId=<module code>. Used by the module detail page's Activity section.
+ */
+export async function listModuleLifecycleAudit(
+  companyId: string,
+  moduleCode: string,
+  limit = 15,
+) {
+  return db
+    .select({
+      id: auditLogs.id,
+      action: auditLogs.action,
+      newValues: auditLogs.newValues,
+      createdAt: auditLogs.createdAt,
+      userName: users.name,
+    })
+    .from(auditLogs)
+    .leftJoin(users, eq(users.id, auditLogs.userId))
+    .where(
+      and(
+        eq(auditLogs.companyId, companyId),
+        eq(auditLogs.resource, "module"),
+        eq(auditLogs.resourceId, moduleCode),
+      ),
+    )
+    .orderBy(desc(auditLogs.createdAt))
+    .limit(limit);
+}
+
 export async function listAuditActions(): Promise<string[]> {
   const rows = await db
     .selectDistinct({ action: auditLogs.action })

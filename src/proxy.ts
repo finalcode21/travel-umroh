@@ -38,6 +38,17 @@ export default function authMiddleware(req: NextRequest) {
   // Everything else requires a session cookie.
   const hasSession = Boolean(req.cookies.get(SESSION_COOKIE)?.value);
   if (!hasSession) {
+    // API consumers get the structured 401 contract, not an HTML redirect
+    // (PRD §35/§55: consistent machine-readable errors for the REST surface).
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: { code: "UNAUTHENTICATED", message: "Sesi berakhir. Silakan login kembali." },
+        },
+        { status: 401 },
+      );
+    }
     const loginUrl = new URL("/login", req.url);
     loginUrl.searchParams.set("redirect", pathname + req.nextUrl.search);
     return NextResponse.redirect(loginUrl);

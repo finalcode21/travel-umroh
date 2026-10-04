@@ -1,4 +1,5 @@
 import type { ModuleManifest } from "@/types";
+import { getDependentManifests } from "@/core/modules/dependency";
 import { notesManifest } from "./notes/manifest";
 import { notesProManifest } from "./notes-pro/manifest";
 
@@ -27,7 +28,7 @@ function createPermissionModuleMap(): ReadonlyMap<string, string | null> {
 /** permission code → owning module code (null = core) */
 export const permissionModuleMap = createPermissionModuleMap();
 
-/** modules that depend on the given module code */
+/** modules that depend on the given module code (delegates to dependency engine) */
 export function getDependentsOf(code: string): ModuleManifest[] {
-  return moduleManifests.filter((m) => m.dependencies?.includes(code));
+  return getDependentManifests(code, moduleManifests);
 }

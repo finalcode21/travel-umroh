@@ -13,6 +13,12 @@ export const companyStatusEnum = pgEnum("company_status", [
 
 export const branchStatusEnum = pgEnum("branch_status", ["ACTIVE", "INACTIVE"]);
 
+/**
+ * Installation lifecycle (PRD §5, §48).
+ * ACTIVE = installed+enabled, DISABLED = installed but not enabled.
+ * INSTALLING / UPGRADING / UNINSTALLING are transient in-flight states;
+ * *_FAILED are persisted failure states cleared by a retry.
+ */
 export const moduleInstallStatusEnum = pgEnum("module_install_status", [
   "PENDING",
   "INSTALLING",
@@ -20,6 +26,10 @@ export const moduleInstallStatusEnum = pgEnum("module_install_status", [
   "DISABLED",
   "PAUSED",
   "ERROR",
+  "UNINSTALLING",
+  "UPGRADING",
+  "INSTALL_FAILED",
+  "UPGRADE_FAILED",
   "UNINSTALLED",
 ]);
 

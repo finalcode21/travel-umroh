@@ -16,7 +16,7 @@ export const notesProManifest: ModuleManifest = {
   priceMonthly: 99_000,
   billingCycle: "MONTHLY",
   trialDays: 7,
-  dependencies: ["notes"],
+  dependencies: [{ module: "notes", version: ">=1.0.0 <2.0.0" }],
   permissions: [
     { code: "notes-pro.view", name: "Lihat Notes Pro" },
   ],

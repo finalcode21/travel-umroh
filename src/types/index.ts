@@ -30,6 +30,18 @@ export interface ModulePermissionDef {
   description?: string;
 }
 
+/** Versioned dependency entry (PRD §9, §27). */
+export interface ModuleDependencyDef {
+  module: string;
+  /** semver constraint, e.g. ">=1.0.0 <2.0.0", "^1.2.3", "1.x"; undefined = any */
+  version?: string;
+}
+
+export type ModuleDependencySpec = string | ModuleDependencyDef;
+
+/** What happens to the module's business data on uninstall (PRD §19). */
+export type ModuleUninstallPolicy = "KEEP_DATA" | "ARCHIVE_DATA" | "DELETE_DATA";
+
 export interface NavigationItemDef {
   code: string;
   label: string;
@@ -72,11 +84,21 @@ export interface ModuleManifest {
   priceMonthly?: number;
   billingCycle?: "MONTHLY" | "YEARLY";
   trialDays?: number;
-  dependencies?: string[];
+  dependencies?: ModuleDependencySpec[];
   permissions: ModulePermissionDef[];
   navigation: NavigationItemDef[];
   settings?: ModuleSettingDef[];
   migrations?: ModuleMigrationDef[];
+  /**
+   * Uninstall data retention policy (PRD §19). Default KEEP_DATA —
+   * uninstall NEVER destroys business data unless explicitly declared.
+   */
+  uninstallPolicy?: ModuleUninstallPolicy;
+  /**
+   * SQL executed before uninstall when policy = ARCHIVE_DATA.
+   * `$1` is substituted with the company id (server-side, UUID-validated).
+   */
+  archiveSql?: string;
   /** SQL executed by the explicit (dangerous) "Delete Module Data" action. */
   deleteDataSql?: string;
 }
@@ -106,6 +128,26 @@ export type ModuleAccessState =
   | "PAUSED" // subscription expired
   | "UNINSTALLED";
 
+/**
+ * Persisted installation lifecycle states (PRD §5, §48).
+ * Mapping from the recommended lifecycle: INSTALLED+ENABLED = ACTIVE,
+ * INSTALLED (not enabled) = DISABLED. INSTALLING / UPGRADING / UNINSTALLING
+ * are transient in-flight states; *_FAILED are terminal-until-retried.
+ */
+export type ModuleInstallStatus =
+  | "PENDING"
+  | "INSTALLING"
+  | "ACTIVE"
+  | "DISABLED"
+  | "PAUSED"
+  | "ERROR"
+  | "UNINSTALLING"
+  | "UPGRADING"
+  | "INSTALL_FAILED"
+  | "UPGRADE_FAILED"
+  | "UNINSTALLED"
+  | "NOT_INSTALLED"; // derived (no row)
+
 export interface ModuleAccess {
   moduleCode: string;
   subscriptionStatus:
@@ -116,17 +158,19 @@ export interface ModuleAccess {
     | "CANCELLED"
     | "NOT_SUBSCRIBED";
   subscriptionExpiresAt: string | null;
-  installStatus:
-    | "PENDING"
-    | "INSTALLING"
-    | "ACTIVE"
-    | "DISABLED"
-    | "PAUSED"
-    | "ERROR"
-    | "UNINSTALLED"
-    | "NOT_INSTALLED";
+  installStatus: ModuleInstallStatus;
   /** effective access used by ACL + navigation */
   access: ModuleAccessState;
+  /** version recorded in the registry (latest available) */
+  availableVersion?: string;
+  /** version installed by this company, when an installation row exists */
+  installedVersion?: string | null;
+  /** true when availableVersion > installedVersion (PRD §26) */
+  updateAvailable?: boolean;
+  /** modules that depend on this module and are installed by this company */
+  dependents?: string[];
+  /** last lifecycle failure, for actionable admin display (PRD §30) */
+  lastError?: string | null;
 }
 
 export interface CompanySummary {
