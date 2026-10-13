@@ -1,0 +1,15 @@
+.neon
+.env.local
+node_modules/
+.next/
+out/
+build/
+.DS_Store
+npm-debug.log*
+.vercel
+next-env.d.ts
+*.tsbuildinfo
+dev.log
+
+# Metadata workspace Freebuff / platform, bukan bagian dari aplikasi
+.freebuff/
