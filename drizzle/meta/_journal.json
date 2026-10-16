@@ -1,1 +1,20 @@
-{"version":"7","dialect":"postgresql","entries":[]}
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1791975500767,
+      "tag": "0000_cute_master_mold",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792045074688,
+      "tag": "0001_curious_boomerang",
+      "breakpoints": true
+    }
+  ]
+}
